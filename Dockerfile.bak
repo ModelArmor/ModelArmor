@@ -1,0 +1,123 @@
+FROM ubuntu:24.04
+
+# Environment
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies
+RUN apt-get update && \
+    apt-get install -y \
+        protobuf-compiler \
+        libgtest-dev \
+        libgflags-dev \
+        protoc-gen-go \
+        golang-go \
+        libmbedtls-dev \
+        software-properties-common \
+        libssl-dev\
+        uuid-dev\
+        python3-pip\
+        swig \
+        git \
+        nano \
+        sudo \
+        bash \
+        unzip \
+        fastqc \
+        openjdk-17-jre-headless \
+        wget && \    
+    rm -rf /var/lib/apt/lists/*
+
+# Install bioinformatics tools: GATK, SAMtools, BWA, Picard
+# RUN mkdir -p /opt/tools && cd /opt/tools && \
+# # Install GATK
+# wget https://github.com/broadinstitute/gatk/releases/download/4.2.0.0/gatk-4.2.0.0.zip && \
+# unzip gatk-4.2.0.0.zip && \
+# rm gatk-4.2.0.0.zip && \
+# ln -s /opt/tools/gatk-4.2.0.0/gatk /usr/local/bin/gatk && \
+# # Install Picard
+# wget https://github.com/broadinstitute/picard/releases/download/3.3.0/picard.jar -O /opt/tools/picard.jar && \
+# # Set up PATH
+# echo 'export PATH=$PATH:/opt/tools/gatk-4.2.0.0' >> /etc/profile && \
+# apt-get install -y samtools bwa && \
+# apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install bioinformatics tools: GATK, Picard, SAMtools, BWA
+RUN mkdir -p /opt/tools && cd /opt/tools && \
+    # Install GATK
+    wget https://github.com/broadinstitute/gatk/releases/download/4.2.0.0/gatk-4.2.0.0.zip && \
+    unzip gatk-4.2.0.0.zip && \
+    rm gatk-4.2.0.0.zip && \
+    ln -s /opt/tools/gatk-4.2.0.0/gatk /usr/local/bin/gatk && \
+    # Install Picard
+    wget https://github.com/broadinstitute/picard/releases/download/3.3.0/picard.jar -O /opt/tools/picard.jar && \
+    # Create Picard wrapper script
+    echo '#!/bin/bash\njava -jar /opt/tools/picard.jar "$@"' > /usr/local/bin/picard && \
+    chmod +x /usr/local/bin/picard && \
+    # Install SAMtools from source
+    apt-get update && \
+    apt-get install -y build-essential libncurses-dev zlib1g-dev libbz2-dev liblzma-dev && \
+    wget https://github.com/samtools/samtools/releases/download/1.19/samtools-1.19.tar.bz2 && \
+    tar -xjf samtools-1.19.tar.bz2 && \
+    cd samtools-1.19 && \
+    ./configure --prefix=/usr/local && make && make install && \
+    cd .. && rm -rf samtools-1.19 samtools-1.19.tar.bz2 && \
+    # Install BWA from source
+    git clone https://github.com/lh3/bwa.git && \
+    cd bwa && make && cp bwa /usr/local/bin/ && \
+    cd .. && rm -rf bwa && \
+    # Clean up
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+
+#You're already linking gatk to /usr/local/bin/gatk. For Picard, you can create a simple wrapper script
+# RUN echo '#!/bin/bash\njava -jar /opt/tools/picard.jar "$@"' > /usr/local/bin/picard && \
+#     chmod +x /usr/local/bin/picard
+# Now you can run Picard like: picard CreateSequenceDictionary ...
+
+# Copy files
+
+# COPY start_certifier_service.sh /start_certifier_service.sh
+COPY certifier-framework-for-confidential-computing/ /root/certifier-framework-for-confidential-computing/
+COPY entrypoint.sh /root/entrypoint.sh
+COPY start_certifier_service.sh /root/start_certifier_service.sh
+COPY run_client.sh /root/run_client.sh
+COPY run_server.sh /root/run_server.sh
+COPY ecoli_reference.fa /root/ecoli_reference.fa
+COPY SRR2584863_0.1_1.fastq /root/SRR2584863_0.1_1.fastq
+COPY SRR2584863_0.1_2.fastq /root/SRR2584863_0.1_2.fastq
+COPY SRR2584863_0.25_1.fastq /root/SRR2584863_0.25_1.fastq
+COPY SRR2584863_0.25_2.fastq /root/SRR2584863_0.25_2.fastq
+COPY SRR2584863_0.5_1.fastq /root/SRR2584863_0.5_1.fastq
+COPY SRR2584863_0.5_2.fastq /root/SRR2584863_0.5_2.fastq
+COPY SRR2584863_1_1.fastq /root/SRR2584863_1_1.fastq
+COPY SRR2584863_1_2.fastq /root/SRR2584863_1_2.fastq
+# COPY SRR2584863_1.fastq /root/SRR2584863_1.fastq
+# COPY SRR2584863_2.fastq /root/SRR2584863_2.fastq
+COPY example_0.1.rg.bam /root/example_0.1.rg.bam
+COPY example_0.25.rg.bam /root/example_0.25.rg.bam
+COPY example_0.5.rg.bam /root/example_0.5.rg.bam
+COPY example_1.rg.bam /root/example_1.rg.bam
+
+
+# Make scripts executable
+RUN chmod +x /root/entrypoint.sh
+RUN chmod +x /root/start_certifier_service.sh
+RUN chmod +x /root/run_client.sh
+RUN chmod +x /root/run_server.sh
+
+
+# Install git dependencies
+RUN cd /root/certifier-framework-for-confidential-computing && \
+    git init && \
+    git config --global user.email "bishwaswagle@gmail.com" && \
+    git config --global user.name "BishwasWagle" && \
+    git add . && \
+    git commit -m "Initial commit"
+
+RUN /root/start_certifier_service.sh
+
+# Working directory
+WORKDIR /root/certifier-framework-for-confidential-computing
+
+# Entry point script
+ENTRYPOINT ["/root/entrypoint.sh"]
