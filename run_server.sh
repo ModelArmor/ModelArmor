@@ -57,6 +57,8 @@ $EXAMPLE_DIR/example_app.exe \
   --operation=run-app-as-server \
   --policy_store_file=policy_store \
   --print_all=true \
+  --acl_deny_file=/root/ccfl/certifier-framework-for-confidential-computing/sample_apps/simple_app/denied.txt \
+  --provision_map=/root/ccfl/certifier-framework-for-confidential-computing/sample_apps/simple_app/provision.map \
   "${REMAINING_ARGS[@]}"
 
 
