@@ -27,6 +27,7 @@
 #include <openssl/rand.h>
 #include <openssl/hmac.h>
 #include <openssl/err.h>
+#include <openssl/sha.h>
 
 #include <fstream>      // For std::ifstream and std::ofstream
 #include <stdexcept>    // For std::exception
@@ -94,6 +95,12 @@ DEFINE_string(client_script, "/root/certifier-framework-for-confidential-computi
 DEFINE_string(dataset_dir, "/root/certifier-framework-for-confidential-computing/sample_apps/simple_app/FL-IDS/federated/federated_datasets", "Directory containing dataset files for client script");
 // DEFINE_int32(client_id, 1, "Client id to pass as -i <id> to client.py");
 DEFINE_bool(stream_client_logs, true, "Send client stdout/stderr lines over the secure channel");
+
+// --- Provisioning flags ---
+DEFINE_string(provision_map, "", "Server: path to client-id -> file mapping (e.g., client-1=/path/file.py)");
+DEFINE_string(provision_dir, "./provisioned", "Client: directory to write provisioned files");
+DEFINE_bool(provision_accept, true, "Client: accept provisioning from server (if true)");
+
 
 
 static string enclave_type("simulated-enclave");
@@ -213,6 +220,134 @@ auto s = load_set_file(path); if (s.count(line)) return true; std::ofstream o(pa
 static bool remove_line(const std::string& path, const std::string& line){
 auto s = load_set_file(path); if (!s.erase(line)) return true; std::ofstream o(path, std::ios::trunc); if(!o.good()) return false; for(auto& e: s) o<<e<<"\n"; return true;
 }
+
+// --- ACL hot-reload state (reload allow/deny if file mtime changes) ---
+// --- ACL hot-reload state (C++14/posix using stat()) ---
+#include <sys/stat.h>
+
+static inline time_t file_mtime_or_zero(const std::string& path) {
+  if (path.empty()) return 0;
+  struct stat st;
+  if (::stat(path.c_str(), &st) == 0) {
+    return st.st_mtime; // portable (macOS/Linux)
+  }
+  return 0;
+}
+
+struct AclHot {
+  std::string allow_path, deny_path;
+  time_t allow_mtime{0}, deny_mtime{0};
+  std::unordered_set<std::string>* allow{nullptr};
+  std::unordered_set<std::string>* deny{nullptr};
+
+  void Init(std::unordered_set<std::string>* a,
+            std::unordered_set<std::string>* d,
+            const std::string& ap,
+            const std::string& dp) {
+    allow = a; deny = d; allow_path = ap; deny_path = dp;
+    if (!allow_path.empty()) *allow = load_set_file(allow_path);
+    if (!deny_path.empty())  *deny  = load_set_file(deny_path);
+    allow_mtime = file_mtime_or_zero(allow_path);
+    deny_mtime  = file_mtime_or_zero(deny_path);
+  }
+
+  void MaybeReload() {
+    // reload allow if modified
+    if (!allow_path.empty()) {
+      time_t t = file_mtime_or_zero(allow_path);
+      if (t != 0 && t != allow_mtime) {
+        *allow = load_set_file(allow_path);
+        allow_mtime = t;
+      }
+    }
+    // reload deny if modified
+    if (!deny_path.empty()) {
+      time_t t = file_mtime_or_zero(deny_path);
+      if (t != 0 && t != deny_mtime) {
+        *deny  = load_set_file(deny_path);
+        deny_mtime  = t;
+      }
+    }
+  }
+} g_acl_hot;
+
+// Remove any embedded NUL and trailing CR/LF from an identity string.
+static std::string sanitize_identity(const std::string& s) {
+  std::string out;
+  out.reserve(s.size());
+  for (unsigned char c : s) {
+    if (c == '\0') break;           // stop at first NUL
+    if (c == '\r' || c == '\n') continue;
+    out.push_back(static_cast<char>(c));
+  }
+  return out;
+}
+
+// Helper function to send file over to client
+// Compute SHA-256 (hex) of a memory buffer
+static std::string sha256_hex(const unsigned char* data, size_t n) {
+  unsigned char hash[32];
+  SHA256_CTX ctx; SHA256_Init(&ctx); SHA256_Update(&ctx, data, n); SHA256_Final(hash, &ctx);
+  static const char* kHex = "0123456789abcdef";
+  std::string out; out.resize(64);
+  for (int i=0;i<32;i++){ out[2*i]=kHex[(hash[i]>>4)&0xF]; out[2*i+1]=kHex[hash[i]&0xF]; }
+  return out;
+}
+
+// Read a single line (up to '\n') from channel; returns false on error/closed.
+static bool chan_readline(secure_authenticated_channel* chan, std::string* out) {
+  out->clear();
+  char c;
+  std::string tmp;
+  while (true) {
+    std::string chunk;
+    int n = chan->read(&chunk);
+    if (n <= 0) return false;
+    for (char ch : chunk) {
+      tmp.push_back(ch);
+      if (ch == '\n') { *out = tmp; return true; }
+    }
+    // If the chunk had no '\n', keep accumulating until we hit EOL.
+  }
+}
+
+// Read exactly N bytes
+static bool chan_readn(secure_authenticated_channel* chan, size_t n, std::string* out) {
+  out->clear(); out->reserve(n);
+  size_t got = 0;
+  while (got < n) {
+    std::string chunk;
+    int r = chan->read(&chunk);
+    if (r <= 0) return false;
+    out->append(chunk);
+    got += (size_t)r;
+  }
+  if (out->size() > n) out->resize(n); // in case channel delivered more
+  return true;
+}
+
+// Sanitize a filename (strip directories)
+static std::string basename_only(const std::string& p){
+  size_t s = p.find_last_of("/\\"); return (s==std::string::npos)? p : p.substr(s+1);
+}
+
+// Trim \r\n
+static inline void rstrip_eol(std::string* s){
+  while(!s->empty() && (s->back()=='\n' || s->back()=='\r')) s->pop_back();
+}
+
+  // Utilities
+  static inline void trim(std::string &s) {
+    // remove leading/trailing spaces and CRs
+    size_t a = 0, b = s.size();
+    while (a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\r')) a++;
+    while (b > a && (s[b-1] == ' ' || s[b-1] == '\t' || s[b-1] == '\r')) b--;
+    if (a != 0 || b != s.size()) s = s.substr(a, b-a);
+  }
+  static inline bool file_readable(const std::string& p) {
+    std::ifstream f(p, std::ios::binary); return f.good();
+  }
+
 
 #ifdef GRAMINE_SIMPLE_APP
 DEFINE_string(gramine_cert_file, "sgx.cert.der", "certificate file name");
@@ -343,9 +478,10 @@ cc_trust_manager *trust_mgr = nullptr;
 // --------------------------------------------------------------------------------------
 static std::unordered_set<std::string> ACL_ALLOW, ACL_DENY;
 static inline bool acl_is_allowed(const std::string& id){
-if (!FLAGS_acl_deny_file.empty() && ACL_DENY.count(id)) return false;
-if (!FLAGS_acl_allow_file.empty() && !ACL_ALLOW.empty() && !ACL_ALLOW.count(id)) return false;
-return true;
+  g_acl_hot.MaybeReload();  // hot-reload on demand (cheap unless file changed)
+  if (!FLAGS_acl_deny_file.empty() && ACL_DENY.count(id)) return false;
+  if (!FLAGS_acl_allow_file.empty() && !ACL_ALLOW.empty() && !ACL_ALLOW.count(id)) return false;
+  return true;
 }
 
 
@@ -376,6 +512,80 @@ bool client_application(secure_authenticated_channel &channel) {
     channel.close(); return false; 
   }
 
+  // ---- Optional provisioning phase ----
+  {
+    std::string hdr;
+    if (!chan_readline(&channel, &hdr)) {
+      printf("[prov-client] no header (server closed?) -- continue without provisioning\n");
+    } else {
+      rstrip_eol(&hdr);
+      if (hdr == "PROVISION-NONE") {
+        printf("[prov-client] no provision for this client\n");
+      } else if (hdr.rfind("PROVISION ", 0) == 0) {
+        if (!FLAGS_provision_accept) {
+          const char* msg = "PROVISION-ERR not-accepted\n";
+          channel.write((int)strlen(msg), (byte*)msg);
+        } else {
+          // Parse "PROVISION <filename> <size> <sha256>"
+          std::istringstream iss(hdr);
+          std::string tag, fname, size_str, sha_hex;
+          iss >> tag >> fname >> size_str >> sha_hex;
+          if (tag != "PROVISION" || fname.empty() || size_str.empty() || sha_hex.size()!=64) {
+            const char* msg = "PROVISION-ERR bad-header\n";
+            channel.write((int)strlen(msg), (byte*)msg);
+          } else {
+            size_t need = 0;
+            try { need = (size_t)std::stoull(size_str); } catch (...) { need = 0; }
+            if (need == 0) {
+              const char* msg = "PROVISION-ERR bad-size\n";
+              channel.write((int)strlen(msg), (byte*)msg);
+            } else {
+              std::string blob;
+              if (!chan_readn(&channel, need, &blob)) {
+                const char* msg = "PROVISION-ERR read-failed\n";
+                channel.write((int)strlen(msg), (byte*)msg);
+              } else {
+                auto got_hex = sha256_hex(reinterpret_cast<const unsigned char*>(blob.data()), blob.size());
+                if (got_hex != sha_hex) {
+                  printf("[prov-client] SHA256 mismatch: got=%s exp=%s\n", got_hex.c_str(), sha_hex.c_str());
+                  const char* msg = "PROVISION-ERR sha256-mismatch\n";
+                  channel.write((int)strlen(msg), (byte*)msg);
+                } else {
+                  // Save to disk
+                  std::string safe = basename_only(fname);
+                  std::string dir  = FLAGS_provision_dir;
+                  // Ensure dir exists (best-effort)
+                  std::string mkdir_cmd = "mkdir -p " + dir;
+                  // system(mkdir_cmd.c_str());
+                  int mkrc = system(mkdir_cmd.c_str());
+                  if (mkrc != 0) {
+                    printf("[prov-client] mkdir failed rc=%d for '%s' (continuing)\n", mkrc, mkdir_cmd.c_str());
+                  }
+
+                  std::string path = dir + "/" + safe;
+                  std::ofstream f(path, std::ios::binary|std::ios::trunc);
+                  if (!f.good()) {
+                    const char* msg = "PROVISION-ERR write-failed\n";
+                    channel.write((int)strlen(msg), (byte*)msg);
+                  } else {
+                    f.write(blob.data(), (std::streamsize)blob.size()); f.close();
+                    printf("[prov-client] saved provisioned file: %s (%zu bytes)\n", path.c_str(), blob.size());
+                    const char* ok = "PROVISION-OK\n";
+                    channel.write((int)strlen(ok), (byte*)ok);
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else {
+        // Unknown header; keep going to remain backward-compatible
+        printf("[prov-client] unexpected header: %s\n", hdr.c_str());
+      }
+    }
+  }
+  // ---- end provisioning phase ----
+
   // Build: python client.py -i <id>
   std::string cmd = FLAGS_python_bin + std::string(" ") +
                    FLAGS_client_script
@@ -397,7 +607,7 @@ bool client_application(secure_authenticated_channel &channel) {
 
 
 void server_application(secure_authenticated_channel &channel) {
-    printf("Server peer id is %s\n", channel.peer_id_.c_str());
+  printf("Server peer id is %s\n", channel.peer_id_.c_str());
   // Read message from client over authenticated, encrypted channel
   // string out;
   // int    n = channel.read(&out);
@@ -408,8 +618,11 @@ void server_application(secure_authenticated_channel &channel) {
   // channel.write(strlen(msg), (byte *)msg);
 //   channel.close();
   // Gate by measurement (peer_id_) and by announced client-id
+ // Preload once; further changes are hot-reloaded by acl_is_allowed()
   if (!FLAGS_acl_allow_file.empty()) ACL_ALLOW = load_set_file(FLAGS_acl_allow_file);
   if (!FLAGS_acl_deny_file.empty())  ACL_DENY  = load_set_file(FLAGS_acl_deny_file);
+  g_acl_hot.Init(&ACL_ALLOW, &ACL_DENY, FLAGS_acl_allow_file, FLAGS_acl_deny_file);
+
   std::string first; 
   int n = channel.read(&first);
   int announced_id = -1; 
@@ -418,10 +631,22 @@ void server_application(secure_authenticated_channel &channel) {
   }
 
   std::string logical_id = (announced_id>=0)? ("client-"+std::to_string(announced_id)) : std::string("client-unknown");
-  std::string composite = channel.peer_id_ + "|" + logical_id; // composite identity
+  // const std::string peer_only = channel.peer_id_;
+  const std::string peer_only = sanitize_identity(channel.peer_id_);
 
-  printf("[acl] peer='%s' logical='%s'\n", channel.peer_id_.c_str(), logical_id.c_str());
+  // Build composite in steps to avoid any precedence surprises
+  std::string composite = peer_only;
+  composite += "|";
+  composite += logical_id;
+
+  printf("[acl] peer='%s' logical='%s'\n", peer_only.c_str(), logical_id.c_str());
   printf("[acl] composite='%s'\n", composite.c_str());
+
+  // DEBUG: also print hex to catch hidden characters
+  printf("[acl] composite_hex(len=%zu): ", composite.size());
+  for (unsigned char c : composite) printf("%02X ", c);
+  printf("\n");
+
   if (ACL_DENY.count(composite)) printf("[acl] matched DENY\n");
   if (!ACL_ALLOW.empty() && !ACL_ALLOW.count(composite)) printf("[acl] not in ALLOW -> deny\n");
 
@@ -434,6 +659,125 @@ void server_application(secure_authenticated_channel &channel) {
 
   const char *okmsg = "ok\n"; 
   channel.write((int)strlen(okmsg), (byte*)okmsg);
+    // ---- Optional provisioning (server side) ----
+    // Mapping file: client-<id>=/path/to/file.py
+
+  // ---- Optional provisioning (server side) ----
+  // Map format (one per line):   client-<id>=/absolute/or/relative/path.py
+  auto load_map = [](const std::string& path)->std::unordered_map<std::string,std::string>{
+    std::unordered_map<std::string,std::string> m;
+    if (path.empty()) return m;
+    std::ifstream f(path);
+    if (!f.good()) {
+      printf("[prov-server] cannot open provision_map: %s\n", path.c_str());
+      return m;
+    }
+    for (std::string line; std::getline(f, line); ){
+      if (line.empty()) continue;
+      // allow comments
+      if (line[0] == '#') continue;
+      // split on first '='
+      auto eq = line.find('=');
+      if (eq == std::string::npos) continue;
+      std::string key = line.substr(0, eq);
+      std::string val = line.substr(eq+1);
+      trim(key); trim(val);
+      if (!key.empty() && !val.empty()) m[key] = val;
+    }
+    return m;
+  };
+
+  printf("[prov-server] provision_map: '%s'\n", FLAGS_provision_map.c_str());
+  printf("[prov-server] logical_id:    '%s'\n", logical_id.c_str());
+
+  std::unordered_map<std::string,std::string> prov = load_map(FLAGS_provision_map);
+  // Debug: show entries loaded
+  if (prov.empty()) {
+    printf("[prov-server] map is empty or unreadable\n");
+  } else {
+    printf("[prov-server] loaded %zu entries:\n", prov.size());
+    for (const auto &kv : prov) {
+      printf("  key='%s' -> '%s'%s\n",
+            kv.first.c_str(), kv.second.c_str(),
+            file_readable(kv.second) ? "" : "   (NOT READABLE!)");
+    }
+  }
+
+  auto it = prov.find(logical_id);
+  // Optional fallback: allow composite identity too (if you decide to key by it)
+  // if (it == prov.end()) {
+  //   std::string composite_key = std::string(sanitize_identity(channel.peer_id_)) + "|" + logical_id;
+  //   auto it2 = prov.find(composite_key);
+  //   if (it2 != prov.end()) it = it2;
+  // }
+
+  if (it == prov.end()) {
+    const char* none = "PROVISION-NONE\n";
+    channel.write((int)strlen(none), (byte*)none);
+    printf("[prov-server] no entry for '%s' — sent NONE\n", logical_id.c_str());
+  } else {
+    const std::string& path = it->second;
+    std::ifstream f(path, std::ios::binary);
+    if (!f.good()){
+      printf("[prov-server] cannot read %s; sending NONE\n", path.c_str());
+      const char* none = "PROVISION-NONE\n";
+      channel.write((int)strlen(none), (byte*)none);
+    } else {
+      std::string blob((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+      f.close();
+      auto hex = sha256_hex(reinterpret_cast<const unsigned char*>(blob.data()), blob.size());
+      std::string fname = basename_only(path);
+      std::ostringstream hdr;
+      hdr << "PROVISION " << fname << " " << blob.size() << " " << hex << "\n";
+      std::string h = hdr.str();
+      channel.write((int)h.size(), (byte*)h.data());
+      if (!blob.empty()) channel.write((int)blob.size(), (byte*)blob.data());
+      printf("[prov-server] sent %s (%zu bytes), sha256=%s\n",
+            fname.c_str(), blob.size(), hex.c_str());
+      std::string ack;
+      if (chan_readline(&channel, &ack)) {
+        rstrip_eol(&ack);
+        printf("[prov-server] client response: %s\n", ack.c_str());
+      } else {
+        printf("[prov-server] no client ack (closed?)\n");
+      }
+    }
+  }
+
+
+  // ---- end provisioning ----
+
+  // -------- Per-round & per-update ACL enforcement --------
+  std::string line;
+  for (;;) {
+    int n = channel.read(&line);
+    if (n <= 0) break;  // channel closed
+
+    // Re-check ACL on *every* inbound line (covers mid-round deny)
+    if (!acl_is_allowed(composite)) {
+      printf("[acl] DENY(update/round): %s — closing channel\n", composite.c_str());
+      const char* deny_msg = "unauthorized mid-round\n";
+      channel.write((int)strlen(deny_msg), (byte*)deny_msg);
+      channel.close();
+      return;
+    }
+
+    // Optional: special handling for round markers emitted by Python
+    if (line.rfind("[ROUND]", 0) == 0) {
+      printf("[acl] round-marker from %s: %s", composite.c_str(), line.c_str());
+      if (!acl_is_allowed(composite)) {
+        printf("[acl] DENY(begin-round): %s — halting\n", composite.c_str());
+        const char* deny2 = "unauthorized at round barrier\n";
+        channel.write((int)strlen(deny2), (byte*)deny2);
+        channel.close();
+        return;
+      }
+    }
+
+    // Forward logs to local stdout (as before)
+    fputs(line.c_str(), stdout);
+    fflush(stdout);
+  }
 }
 
 // --------------------------------------------------------------------------------------
@@ -652,7 +996,11 @@ int main(int an, char **av) {
 // ACL_DENY = load_set_file(FLAGS_acl_deny_file);
 if (!FLAGS_acl_allow_file.empty()) ACL_ALLOW = load_set_file(FLAGS_acl_allow_file);
 if (!FLAGS_acl_deny_file.empty())  ACL_DENY  = load_set_file(FLAGS_acl_deny_file);
+g_acl_hot.Init(&ACL_ALLOW, &ACL_DENY, FLAGS_acl_allow_file, FLAGS_acl_deny_file);
 
+printf("[acl] allow=%s (%zu), deny=%s (%zu)\n",
+       FLAGS_acl_allow_file.c_str(), ACL_ALLOW.size(),
+       FLAGS_acl_deny_file.c_str(),  ACL_DENY.size());
 
   if (FLAGS_print_all && (FLAGS_operation == "cold-init")) {
     printf("public_key_alg='%s', authenticated_symmetric_key_alg='%s\n",
