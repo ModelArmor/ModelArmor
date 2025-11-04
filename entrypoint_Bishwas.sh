@@ -2,7 +2,7 @@
 echo "Starting Certifier setup..."
 
 # Navigate and run the main shell script
-cd /certifier-framework-for-confidential-computing
+cd /secure-federated-learning
 pwd
 
 # Run your custom logic

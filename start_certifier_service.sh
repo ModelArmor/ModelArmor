@@ -4,7 +4,7 @@ set -e  # Exit on error
 set -o pipefail
 
 # Set up environment variables
-export CERTIFIER_PROTOTYPE=/root/certifier-framework-for-confidential-computing
+export CERTIFIER_PROTOTYPE=/root/secure-federated-learning
 export EXAMPLE_DIR=$CERTIFIER_PROTOTYPE/sample_apps/simple_app
 
 export PATH=$PATH:/usr/local/go/bin 
@@ -117,10 +117,17 @@ echo "[*] Setting up data directories..."
 cd $EXAMPLE_DIR
 mkdir -p service app1_data app2_data app3_data
 
+echo "[*] Ensuring per-client data roots exist"
+for i in $(seq 1 10); do
+  dir="$EXAMPLE_DIR/app${i}_data"
+  mkdir -p "$dir"
+  cp -p provisioning/* $dir
+done
+
 echo "[*] Provisioning app and service files..."
-cp -p provisioning/* app1_data/
-cp -p provisioning/* app2_data/
-cp -p provisioning/* app3_data/
+# cp -p provisioning/* app1_data/
+# cp -p provisioning/* app2_data/
+# cp -p provisioning/* app3_data/
 cp -p provisioning/policy_key_file.bin provisioning/policy_cert_file.bin provisioning/policy.bin service/
 
 

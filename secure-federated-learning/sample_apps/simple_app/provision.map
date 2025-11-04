@@ -1,0 +1,2 @@
+client-1=/root/ccfl/secure-federated-learning/sample_apps/simple_app/client1.py
+client-2=/root/ccfl/secure-federated-learning/sample_apps/simple_app/client2.py

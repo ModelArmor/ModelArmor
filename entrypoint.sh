@@ -3,7 +3,7 @@ set -e
 
 echo "[*] Starting Certifier setup..."
 
-#cd /root/certifier-framework-for-confidential-computing
+#cd /root/secure-federated-learning
 cd
 pwd
 
