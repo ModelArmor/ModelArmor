@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package certifier.bioinformatics;
+
+message BioinformaticsRequest {
+    string analysis_type = 1;
+    string repository_url = 2;
+    string dataset_name = 3;
+    string parameters = 4;
+}
+
+message BioinformaticsResponse {
+    bool success = 1;
+    string status = 2;
+    string result = 3;
+    string error = 4;
+}

@@ -1,0 +1,85 @@
+#
+# Helpful script to run example
+#
+#export GOROOT=/usr/local/go
+#export PATH=$PATH:$GOROOT/bin
+#export GO111MODULE=off
+export GOPATH=$HOME
+export CERTIFIER_PROTOTYPE=~/src/github.com/jlmucb/crypto/v2/certifier-framework-for-confidential-computing
+export EXAMPLE_DIR=$CERTIFIER_PROTOTYPE/sample_apps/simple_app_under_oe
+
+# Create keys
+mkdir -p $EXAMPLE_DIR/provisioning
+cd $EXAMPLE_DIR/provisioning
+
+$CERTIFIER_PROTOTYPE/utilities/cert_utility.exe --operation=generate-policy-key-and-test-keys \
+    --policy_key_output_file=policy_key_file.bin --policy_cert_output_file=policy_cert_file.bin \
+    --platform_key_output_file=platform_key_file.bin --attest_key_output_file=attest_key_file.bin
+
+# embed policy key and compile app
+cd $EXAMPLE_DIR/provisioning
+$CERTIFIER_PROTOTYPE/utilities/embed_policy_key.exe --input=policy_cert_file.bin --output=../policy_key.cc
+
+# make app, provision key and compute app measurement
+cd $EXAMPLE_DIR/provisioning
+openssl x509 -in vse.crt -inform pem -out vse.cer.der -outform der
+cd $EXAMPLE_DIR
+make
+make dump_mrenclave
+
+# build policy
+cd $EXAMPLE_DIR/provisioning
+
+
+$CERTIFIER_PROTOTYPE/utilities/make_unary_vse_clause.exe --key_subject="" \
+  --measurement_subject=binary_trusted_measurements_file.bin --verb="is-trusted" \
+  --output=ts1.bin
+$CERTIFIER_PROTOTYPE/utilities/make_indirect_vse_clause.exe --key_subject=policy_key_file.bin \
+  --verb="says" --clause=ts1.bin --output=vse_policy1.bin
+
+$CERTIFIER_PROTOTYPE/utilities/make_signed_claim_from_vse_clause.exe --vse_file=vse_policy1.bin \
+  --duration=9000 --private_key_file=policy_key_file.bin --output=signed_claim_1.bin
+
+$CERTIFIER_PROTOTYPE/utilities/package_claims.exe --input=signed_claim_1.bin \
+  --output=policy.bin
+
+$CERTIFIER_PROTOTYPE/utilities/print_packaged_claims.exe --input=policy.bin
+
+# provision service and apps
+cd $EXAMPLE_DIR
+mkdir -p app1_data app2_data
+mkdir -p service
+
+# provision service and apps
+cd $EXAMPLE_DIR/provisioning
+
+cp ./* $EXAMPLE_DIR/service
+cp ./* $EXAMPLE_DIR/app1_data
+cp ./* $EXAMPLE_DIR/app2_data
+
+#compile the server
+cd $CERTIFIER_PROTOTYPE/certifier_service
+go build simpleserver.go
+
+#run server
+cd $EXAMPLE_DIR/service
+$CERTIFIER_PROTOTYPE/certifier_service/simpleserver \
+      --policyFile=policy.bin --readPolicy=true
+
+# initialize client app
+cd $EXAMPLE_DIR
+./host/host enclave/enclave.signed cold-init $EXAMPLE_DIR/app1_data
+# get client app certified
+./host/host enclave/enclave.signed get-certified $EXAMPLE_DIR/app1_data
+
+# initialize server app
+./host/host enclave/enclave.signed cold-init $EXAMPLE_DIR/app2_data
+# get server app certified
+./host/host enclave/enclave.signed get-certified $EXAMPLE_DIR/app2_data
+
+#run the app
+cd $EXAMPLE_DIR
+./host/host enclave/enclave.signed run-app-as-server $EXAMPLE_DIR/app2_data
+cd $EXAMPLE_DIR
+./host/host enclave/enclave.signed run-app-as-client $EXAMPLE_DIR/app1_data
+

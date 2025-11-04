@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export CERTIFIER_PROTOTYPE=/root/certifier-framework-for-confidential-computing
+export CERTIFIER_PROTOTYPE=/root/secure-federated-learning
 export EXAMPLE_DIR=$CERTIFIER_PROTOTYPE/sample_apps/simple_app
 
 cd $EXAMPLE_DIR

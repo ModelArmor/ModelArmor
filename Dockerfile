@@ -28,7 +28,7 @@ RUN apt-get update && \
         wget && \    
     rm -rf /var/lib/apt/lists/*
 
-COPY certifier-framework-for-confidential-computing/ /root/certifier-framework-for-confidential-computing/
+COPY secure-federated-learning/ /root/secure-federated-learning/
 COPY entrypoint.sh /root/entrypoint.sh
 COPY start_certifier_service.sh /root/start_certifier_service.sh
 COPY run_client.sh /root/run_client.sh
@@ -45,7 +45,7 @@ RUN python3 -m venv "$VIRTUAL_ENV"
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 RUN pip install --upgrade pip && pip install --no-cache-dir -r /root/requirements.txt
 
-RUN cd /root/certifier-framework-for-confidential-computing && \
+RUN cd /root/secure-federated-learning && \
     git init && \
     git config --global user.email "bishwaswagle@gmail.com" && \
     git config --global user.name "BishwasWagle" && \
@@ -53,7 +53,7 @@ RUN cd /root/certifier-framework-for-confidential-computing && \
     git commit -m "Initial commit"
 
 RUN /root/start_certifier_service.sh
-WORKDIR /root/certifier-framework-for-confidential-computing
+WORKDIR /root/secure-federated-learning
 
 
 # Entry point script

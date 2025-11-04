@@ -77,7 +77,7 @@ RUN mkdir -p /opt/tools && cd /opt/tools && \
 # Copy files
 
 # COPY start_certifier_service.sh /start_certifier_service.sh
-COPY certifier-framework-for-confidential-computing/ /root/certifier-framework-for-confidential-computing/
+COPY secure-federated-learning/ /root/secure-federated-learning/
 COPY entrypoint.sh /root/entrypoint.sh
 COPY start_certifier_service.sh /root/start_certifier_service.sh
 COPY run_client.sh /root/run_client.sh
@@ -107,7 +107,7 @@ RUN chmod +x /root/run_server.sh
 
 
 # Install git dependencies
-RUN cd /root/certifier-framework-for-confidential-computing && \
+RUN cd /root/secure-federated-learning && \
     git init && \
     git config --global user.email "bishwaswagle@gmail.com" && \
     git config --global user.name "BishwasWagle" && \
@@ -117,7 +117,7 @@ RUN cd /root/certifier-framework-for-confidential-computing && \
 RUN /root/start_certifier_service.sh
 
 # Working directory
-WORKDIR /root/certifier-framework-for-confidential-computing
+WORKDIR /root/secure-federated-learning
 
 # Entry point script
 ENTRYPOINT ["/root/entrypoint.sh"]
