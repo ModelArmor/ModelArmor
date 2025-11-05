@@ -1,2 +1,2 @@
-client-1=/root/ccfl/secure-federated-learning/sample_apps/simple_app/client1.py
-client-2=/root/ccfl/secure-federated-learning/sample_apps/simple_app/client2.py
+client-1=/root/secure-federated-learning/sample_apps/simple_app/client1.py
+client-2=/root/secure-federated-learning/sample_apps/simple_app/client2.py

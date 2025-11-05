@@ -57,23 +57,15 @@ $EXAMPLE_DIR/example_app.exe \
   --operation=run-app-as-server \
   --policy_store_file=policy_store \
   --print_all=true \
-  --acl_deny_file=/root/ccfl/secure-federated-learning/sample_apps/simple_app/denied.txt \
-  --provision_map=/root/ccfl/secure-federated-learning/sample_apps/simple_app/provision.map \
+  --acl_deny_file=/root/secure-federated-learning/sample_apps/simple_app/denied.txt \
+  --provision_map=/root/secure-federated-learning/sample_apps/simple_app/provision.map \
+  --server_script=/root/non-secure-federated-learning/server.py \
+  --workdir=/root/non-secure-federated-learning \
+  --venv_path=/opt/venv/bin/activate \
   "${REMAINING_ARGS[@]}"
 
 
-# docker run --name ccfl-server --network ccfl-net \
-#   -p 8123:8123 -p 8124:8124 \
-#   ccfl:latest server  --host=127.0.0.1 \
-#   --venv_activate=/root/secure-federated-learning/sample_apps/simple_app/FL-IDS/venv/bin/activate 
-#   --policy_host=127.0.0.1 --server_app_host=127.0.0.1
-
-
-# docker run --name ccfl-client --network ccfl-net \
-#   ccfl:latest client \
-#   --client_script=client.py \
-#   --venv_activate=/root/secure-federated-learning/sample_apps/simple_app/FL-IDS/venv/bin/activate \
-#   --client_id=1
-#   --policy_host=127.0.0.1 --server_app_host=127.0.0.1
-
-#   docker run --name ccfl-client --network ccfl-net bwbgv/ccfl client --server_app_host=172.31.20.110 --policy_host=172.31.20.110 --client_id 1  --venv_activate=/root/secure-federated-learning/sample_apps/simple_app/FL-IDS/venv/bin/activate 
+docker run --name ccfl-server --network ccfl-net \
+  -p 8123:8123 -p 8124:8124 -p 8080:8080 \
+  bwbgv/ccfl:latest server  --host=0.0.0.0 \
+  --policy_host=172.31.18.222 --server_app_host=172.31.18.222

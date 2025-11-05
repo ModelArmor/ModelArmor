@@ -118,7 +118,7 @@ cd $EXAMPLE_DIR
 mkdir -p service app1_data app2_data app3_data
 
 echo "[*] Ensuring per-client data roots exist"
-for i in $(seq 1 10); do
+for i in $(seq 1 11); do
   dir="$EXAMPLE_DIR/app${i}_data"
   mkdir -p "$dir"
   cp -p provisioning/* $dir

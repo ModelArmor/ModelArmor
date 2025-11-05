@@ -1,2 +1,9 @@
 venv/
 .ipynb_checkpoints/
+data_and_graphs/
+figs/
+plots/
+secured_metrics/
+unsecured_metrics/
+data_and_graphs.zip
+generate_plots.py
