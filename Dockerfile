@@ -29,11 +29,12 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY secure-federated-learning/ /root/secure-federated-learning/
+COPY non-secure-federated-learning/ /root/non-secure-federated-learning/
 COPY entrypoint.sh /root/entrypoint.sh
 COPY start_certifier_service.sh /root/start_certifier_service.sh
 COPY run_client.sh /root/run_client.sh
 COPY run_server.sh /root/run_server.sh
-COPY requirements.txt /root/requirements.txt
+COPY non-secure-federated-learning/requirements.txt /root/requirements.txt
 # Make scripts executable
 RUN chmod +x /root/entrypoint.sh
 RUN chmod +x /root/start_certifier_service.sh

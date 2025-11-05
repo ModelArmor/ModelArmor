@@ -34,6 +34,7 @@
 #include <cstdlib>      // For system()
 #include <string>
 #include <exception>
+#include <thread>
 
 #include "certifier_framework.h"
 #include "certifier_utilities.h"
@@ -589,7 +590,8 @@ bool client_application(secure_authenticated_channel &channel) {
   // Build: python client.py -i <id>
   std::string cmd = FLAGS_python_bin + std::string(" ") +
                    FLAGS_client_script
-                  +  " -i " + std::to_string(FLAGS_client_id) + 
+                  +  " -i " + std::to_string(FLAGS_client_id) 
+                  +  " -a " + FLAGS_server_app_host + 
                    " -d " + FLAGS_dataset_dir;
 
   printf("[client] Executing in %s: %s\n", FLAGS_workdir.c_str(), cmd.c_str());
@@ -748,36 +750,64 @@ void server_application(secure_authenticated_channel &channel) {
   // ---- end provisioning ----
 
   // -------- Per-round & per-update ACL enforcement --------
-  std::string line;
-  for (;;) {
-    int n = channel.read(&line);
-    if (n <= 0) break;  // channel closed
+  // std::string line;
+  // for (;;) {
+  //   int n = channel.read(&line);
+  //   if (n <= 0) break;  // channel closed
 
-    // Re-check ACL on *every* inbound line (covers mid-round deny)
-    if (!acl_is_allowed(composite)) {
-      printf("[acl] DENY(update/round): %s — closing channel\n", composite.c_str());
-      const char* deny_msg = "unauthorized mid-round\n";
-      channel.write((int)strlen(deny_msg), (byte*)deny_msg);
-      channel.close();
-      return;
-    }
+  //   // Re-check ACL on *every* inbound line (covers mid-round deny)
+  //   if (!acl_is_allowed(composite)) {
+  //     printf("[acl] DENY(update/round): %s — closing channel\n", composite.c_str());
+  //     const char* deny_msg = "unauthorized mid-round\n";
+  //     channel.write((int)strlen(deny_msg), (byte*)deny_msg);
+  //     channel.close();
+  //     return;
+  //   }
 
-    // Optional: special handling for round markers emitted by Python
-    if (line.rfind("[ROUND]", 0) == 0) {
-      printf("[acl] round-marker from %s: %s", composite.c_str(), line.c_str());
-      if (!acl_is_allowed(composite)) {
-        printf("[acl] DENY(begin-round): %s — halting\n", composite.c_str());
-        const char* deny2 = "unauthorized at round barrier\n";
-        channel.write((int)strlen(deny2), (byte*)deny2);
-        channel.close();
-        return;
+  //   // Optional: special handling for round markers emitted by Python
+  //   if (line.rfind("[ROUND]", 0) == 0) {
+  //     printf("[acl] round-marker from %s: %s", composite.c_str(), line.c_str());
+  //     if (!acl_is_allowed(composite)) {
+  //       printf("[acl] DENY(begin-round): %s — halting\n", composite.c_str());
+  //       const char* deny2 = "unauthorized at round barrier\n";
+  //       channel.write((int)strlen(deny2), (byte*)deny2);
+  //       channel.close();
+  //       return;
+  //     }
+  //   }
+
+  //   // Forward logs to local stdout (as before)
+  //   fputs(line.c_str(), stdout);
+  //   fflush(stdout);
+  // }
+
+    // ---- end provisioning ----
+
+  // -------- Stream client logs in background and return immediately --------
+  // Detach a worker to read and print the client's streamed logs so the
+  // main handler can return and accept the next client.
+    auto composite_copy = composite;  // capture identity by value for logging
+
+    std::thread([composite_copy, ch = std::move(channel)]() mutable {
+      std::string line;
+      for (;;) {
+        int n = ch.read(&line);
+        if (n <= 0) break;  // channel closed
+
+        // Optional: round marker / ACL re-checks can go here
+        // if (line.rfind("[ROUND]", 0) == 0) {
+        //   printf("[acl] round-marker from %s: %s", composite_copy.c_str(), line.c_str());
+        // }
+
+        // Forward logs to server console
+        fputs(line.c_str(), stdout);
+        fflush(stdout);
       }
-    }
+      ch.close();
+    }).detach();
 
-    // Forward logs to local stdout (as before)
-    fputs(line.c_str(), stdout);
-    fflush(stdout);
-  }
+    // IMPORTANT: return now so the dispatcher can accept other clients
+    return;
 }
 
 // --------------------------------------------------------------------------------------
@@ -1122,18 +1152,30 @@ printf("[acl] allow=%s (%zu), deny=%s (%zu)\n",
     printf("Running App as server\n");
 
      // Start the Python FL server *once* in background and log to server.log
+    // {
+    //   std::string cmd = FLAGS_python_bin + std::string(" ") + FLAGS_server_script;
+    //   // Redirect to a logfile so the process keeps running after we return.
+    //   cmd += " > server.log 2>&1 &";
+    //   int rc = 0;
+    //   bool ok = run_command_stream(FLAGS_workdir, FLAGS_venv_path, cmd, /*chan*/nullptr, &rc);
+    //   // run_command_stream will wait; to truly background, wrap in bash -lc above with '&'
+    //   // We already appended '&', so it returns quickly; rc==0 just means bash accepted it.
+    //   if (!ok) {
+    //     printf("[server] WARNING: attempted to start server.py but got rc=%d. Check server.log\n", rc);
+    //   } else {
+    //     printf("[server] server.py launched (background). Tail %s/server.log for details.\n", FLAGS_workdir.c_str());
+    //   }
+    // }
     {
-      std::string cmd = FLAGS_python_bin + std::string(" ") + FLAGS_server_script;
-      // Redirect to a logfile so the process keeps running after we return.
-      cmd += " > server.log 2>&1 &";
-      int rc = 0;
-      bool ok = run_command_stream(FLAGS_workdir, FLAGS_venv_path, cmd, /*chan*/nullptr, &rc);
-      // run_command_stream will wait; to truly background, wrap in bash -lc above with '&'
-      // We already appended '&', so it returns quickly; rc==0 just means bash accepted it.
-      if (!ok) {
-        printf("[server] WARNING: attempted to start server.py but got rc=%d. Check server.log\n", rc);
+      std::string cmd = "bash -lc 'cd " + FLAGS_workdir + " && "
+                      + (FLAGS_venv_path.empty() ? "" : ("source " + FLAGS_venv_path + " && "))
+                      + "nohup setsid " + FLAGS_python_bin + " " + FLAGS_server_script
+                      + " </dev/null >> server.log 2>&1 & disown'";
+      int rc = ::system(cmd.c_str());
+      if (rc != 0) {
+        printf("[server] WARNING: nohup launch rc=%d. Check server.log\n", rc);
       } else {
-        printf("[server] server.py launched (background). Tail %s/server.log for details.\n", FLAGS_workdir.c_str());
+        printf("[server] server.py launched (nohup/setsid). Tail %s/server.log\n", FLAGS_workdir.c_str());
       }
     }
 

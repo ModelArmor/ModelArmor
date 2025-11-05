@@ -1,18 +1,28 @@
 # client.py
 # Minimal, CPU-only Flower client for MNIST shards with per-round timing & peak RSS logging.
-import os, time, pathlib, csv, psutil, torch, torch.nn as nn
-import torch.nn.functional as F
+
+import os, time, pathlib, csv, psutil, argparse
+import torch, torch.nn as nn, torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 import numpy as np
 import flwr as fl
-from typing import Dict, Tuple, List, Optional
+from typing import Tuple, List
+
+# ------------------------
+# CLI ARGUMENTS
+# ------------------------
+parser = argparse.ArgumentParser(description="Federated Learning Client for MNIST")
+parser.add_argument("-i", "--id", type=int, help="Client ID", default=int(os.environ.get("CLIENT_ID", 1)))
+parser.add_argument("-a", "--addr", type=str, help="Server address (e.g., 127.0.0.1:8080)", default=os.environ.get("SERVER_ADDR", "127.0.0.1:8080"))
+parser.add_argument("-d", "--datasets", type=str, help="Server address (e.g., 127.0.0.1:8080)", default=os.environ.get("SERVER_ADDR", "127.0.0.1:8080"))
+args = parser.parse_args()
 
 # ------------------------
 # ENV / defaults
 # ------------------------
-CLIENT_ID = int(os.environ.get("CLIENT_ID", "5"))
-SERVER_ADDR = os.environ.get("SERVER_ADDR", "127.0.0.1:8080")
+CLIENT_ID = args.id
+SERVER_ADDR = args.addr+":8080"
 SHARD_DIR = os.environ.get("SHARD_DIR", "shards")
 BATCH = int(os.environ.get("BATCH", "32"))
 LOCAL_EPOCHS = int(os.environ.get("LOCAL_EPOCHS", "1"))
@@ -26,38 +36,32 @@ CSV_PATH = os.path.join(METRICS_DIR, f"client_{CLIENT_ID}.csv")
 
 torch.manual_seed(SEED)
 np.random.seed(SEED)
-
 device = torch.device("cpu")  # t2.micro friendly
 
 # ------------------------
 # Data
 # ------------------------
 def load_dataloaders() -> Tuple[DataLoader, DataLoader]:
-    # Train: MNIST train split, sharded indices
     tr = transforms.Compose([transforms.ToTensor()])
     ds_train = datasets.MNIST(root="data/mnist", train=True, download=True, transform=tr)
     shard_path = os.path.join(SHARD_DIR, f"client_{CLIENT_ID}.npy")
     idx = np.load(shard_path)
     ds_train = Subset(ds_train, indices=idx)
-
-    # Test: use full test set locally just for sanity eval (optional)
     ds_test = datasets.MNIST(root="data/mnist", train=False, download=True, transform=tr)
-
     train_loader = DataLoader(ds_train, batch_size=BATCH, shuffle=True, num_workers=NUM_WORKERS)
-    test_loader  = DataLoader(ds_test,  batch_size=256,  shuffle=False, num_workers=NUM_WORKERS)
+    test_loader = DataLoader(ds_test, batch_size=256, shuffle=False, num_workers=NUM_WORKERS)
     return train_loader, test_loader
 
 # ------------------------
-# Model: tiny MLP
+# Model
 # ------------------------
 class TinyMLP(nn.Module):
     def __init__(self):
         super().__init__()
         self.fc1 = nn.Linear(28*28, 128)
         self.fc2 = nn.Linear(128, 10)
-
     def forward(self, x):
-        x = x.view(x.size(0), -1)      # flatten
+        x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
         return x
@@ -81,7 +85,7 @@ def log_client_metrics(round_id: int, duration_s: float, note: str = ""):
     with open(CSV_PATH, "a", newline="") as f:
         w = csv.writer(f)
         if not file_exists:
-            w.writerow(["round","duration_s","peak_rss_mb","notes"])
+            w.writerow(["round", "duration_s", "peak_rss_mb", "notes"])
         w.writerow([round_id, round(duration_s,4), round(mem_rss_mb(),2), note])
 
 # ------------------------
@@ -121,26 +125,19 @@ class MnistClient(fl.client.NumPyClient):
     def __init__(self):
         self.model = TinyMLP().to(device)
         self.train_loader, self.test_loader = load_dataloaders()
-
     def get_parameters(self, config):
         return get_parameters(self.model)
-
     def fit(self, parameters, config):
         set_parameters(self.model, parameters)
         rnd = int(config.get("server_round", 0))
         local_epochs = int(config.get("local_epochs", LOCAL_EPOCHS))
         lr = float(config.get("lr", LR))
-
         t0 = time.time()
         train_one_round(self.model, self.train_loader, epochs=local_epochs, lr=lr)
         dur = time.time() - t0
-
-        # optional quick eval to log accuracy locally (won't be sent to server)
         loss, acc = test(self.model, self.test_loader)
         log_client_metrics(rnd, dur, note=f"acc={round(acc,4)} loss={round(loss,4)}")
-
         return get_parameters(self.model), len(self.train_loader.dataset), {}
-
     def evaluate(self, parameters, config):
         set_parameters(self.model, parameters)
         loss, acc = test(self.model, self.test_loader)
@@ -153,10 +150,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# Option A: fetch shards from server VM once (scp/rsync/S3) to keep identical data
-# docker run -d --name fl-client-1 \
-#   -v /root/fl/shards:/root/app/shards \
-#   bwbgv/modelarmour-low:latest \
-#   python3 client.py --server http://172.31.22.64:8000 --client_id 1 --local_epochs 1

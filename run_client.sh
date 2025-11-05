@@ -33,29 +33,11 @@ $EXAMPLE_DIR/example_app.exe \
   --operation=run-app-as-client \
   --policy_store_file=policy_store \
   --print_all=true \
-  --workdir=/root/ccfl/secure-federated-learning/sample_apps/simple_app/TrainedFilters/ \
+  --workdir=/root/non-secure-federated-learning \
   --client_id=1 \
-  --client_script=/root/ccfl/secure-federated-learning/sample_apps/simple_app/TrainedFilters/trainmodel.py \
+  --client_script=/root/secure-federated-learning/client.py \
   --venv_path=/root/venv/bin/activate \
   --auto_data_dir_per_client=true \
-  --provision_dir=/root/ccfl/secure-federated-learning/sample_apps/simple_app/TrainedFilters/ \
+  --provision_dir=/root/secure-federated-learning/sample_apps/simple_app/TrainedFilters/ \
   --provision_accept=true \
   "$@"
-# docker run -it --name ve3c-server --network certifier-net -p 8123:8123 -p 8124:8124 ve3c-image server --host=0.0.0.0
-# docker run -it --name ve3c-client --network certifier-net ve3c-image client
-
-# ./run_client.sh \
-#  --fl_workdir /root/secure-federated-learning/sample_apps/simple_app/FL-IDS/ \
-#  --server_app_host 0.0.0.0 \
-#  -- policy_host 0.0.0.0 \
-#  --client_script /root/secure-federated-learning/sample_apps/simple_app/FL-IDS/federated/binary/client.py \
-#  --client_id 1 \
-#  --venv_activate /root/secure-federated-learning/sample_apps/simple_app/FL-IDS/venv/bin/activate 
-
-#  docker run --name ccfl-client --network ccfl-net \
-#   ccfl:latest client \
-#   --server_app_host=0.0.0.0 \
-#   --policy_host=0.0.0.0 \
-#   --client_script=client.py \
-#   --venv_activate=/root/secure-federated-learning/sample_apps/simple_app/FL-IDS/venv/bin/activate \
-#   --client_id=1
