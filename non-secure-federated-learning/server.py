@@ -83,17 +83,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# Server VM
-# open port 8000 in your cloud firewall/security group
-# mkdir -p /root/fl/shards
-# # (Option A) Prepare shards once here (recommended)
-# docker run --rm -v /root/fl/shards:/root/app/shards bwbgv/modelarmour-low:latest \
-#   python3 prepare_shards.py --n_clients 10 --non_iid --alpha 0.5
-
-# # Start server
-# docker run -d --name fl-server -p 8000:8000 \
-#   -v /root/fl/shards:/root/app/shards \
-#   bwbgv/modelarmour-low:latest \
-#   python3 server.py --host 0.0.0.0 --port 8000 --rounds 100 --clients 10
