@@ -64,8 +64,3 @@ $EXAMPLE_DIR/example_app.exe \
   --venv_path=/opt/venv/bin/activate \
   "${REMAINING_ARGS[@]}"
 
-
-docker run --name ccfl-server --network ccfl-net \
-  -p 8123:8123 -p 8124:8124 -p 8080:8080 \
-  bwbgv/ccfl:latest server  --host=0.0.0.0 \
-  --policy_host=172.31.18.222 --server_app_host=172.31.18.222

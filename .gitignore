@@ -7,3 +7,5 @@ secured_metrics/
 unsecured_metrics/
 data_and_graphs.zip
 generate_plots.py
+.DS_Store
+__pycahche__/
