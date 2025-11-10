@@ -35,6 +35,7 @@
 #include <string>
 #include <exception>
 #include <thread>
+#include <mutex>
 
 #include "certifier_framework.h"
 #include "certifier_utilities.h"
@@ -116,6 +117,7 @@ std::string read_file_contents(const std::string& file_path) {
                       std::istreambuf_iterator<char>());
 }
 
+static std::mutex g_chan_mu;
 // Run a command via bash -lc "<cd && [source venv &&] cmd>".
 // If chan is non-null, each stdout/stderr line is also sent over the secure channel.
 bool run_command_stream(const std::string& workdir,
@@ -141,6 +143,7 @@ bool run_command_stream(const std::string& workdir,
     fflush(stdout);
     // Optionally forward to peer
     if (chan != nullptr && FLAGS_stream_client_logs) {
+      std::lock_guard<std::mutex> lk(g_chan_mu);
       int n = static_cast<int>(strlen(buffer));
       chan->write(n, reinterpret_cast<byte*>(buffer));
       // chan->write(strlen(buffer), reinterpret_cast<const byte*>(buffer));
@@ -493,6 +496,86 @@ static inline bool acl_is_allowed(const std::string& id){
 
 // -----------------------------------------------------------------------------------------
 
+// Minimal URL-decoder for query params (we only need digits and dashes)
+static inline std::string http_get_query(const std::string& req, const char* key){
+  // crude parse: ...?a=1&b=2 ...
+  auto qpos = req.find("?");
+  if (qpos == std::string::npos) return "";
+  auto qs = req.substr(qpos+1);
+  std::istringstream iss(qs);
+  std::string kv;
+  while (std::getline(iss, kv, '&')) {
+    auto eq = kv.find('=');
+    if (eq==std::string::npos) continue;
+    if (kv.substr(0,eq) == key) return kv.substr(eq+1);
+  }
+  return "";
+}
+
+static void preround_http_gateway(secure_authenticated_channel* chan, int client_id) {
+  // Simple TCP server on 127.0.0.1:9099
+  int srv = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (srv < 0) { perror("[gate] socket"); return; }
+
+  int opt = 1; setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+  sockaddr_in addr{}; addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
+  addr.sin_port = htons(9099);
+  if (bind(srv, (sockaddr*)&addr, sizeof(addr)) < 0) { perror("[gate] bind"); close(srv); return; }
+  if (listen(srv, 8) < 0) { perror("[gate] listen"); close(srv); return; }
+
+  printf("[gate] preround HTTP listening on 127.0.0.1:9099\n");
+
+  for (;;) {
+    int c = accept(srv, nullptr, nullptr);
+    if (c < 0) { perror("[gate] accept"); continue; }
+
+    // Read a tiny HTTP request (single packet expected)
+    char buf[1024]; int r = recv(c, buf, sizeof(buf)-1, 0);
+    if (r <= 0) { close(c); continue; }
+    buf[r] = 0;
+    std::string req(buf, r);
+
+    // Expect: GET /preround?client_id=X&round=Y HTTP/1.1
+    bool ok_route = req.rfind("GET /preround", 0) == 0;
+    std::string q_client = http_get_query(req, "client_id");
+    std::string q_round  = http_get_query(req, "round");
+
+    std::string http_resp;
+    if (!ok_route || q_client.empty() || q_round.empty()) {
+      http_resp = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
+      send(c, http_resp.data(), (int)http_resp.size(), 0);
+      close(c);
+      continue;
+    }
+
+    // Forward over secure channel: "PREROUND client-<id> <round>\n"
+    std::string preround_line = "PREROUND client-" + q_client + " " + q_round + "\n";
+    std::string reply;
+    {
+      std::lock_guard<std::mutex> lk(g_chan_mu);
+      chan->write((int)preround_line.size(), (byte*)preround_line.data());
+      if (!chan_readline(chan, &reply)) {
+        http_resp = "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
+        send(c, http_resp.data(), (int)http_resp.size(), 0);
+        close(c);
+        continue;
+      }
+    }
+    rstrip_eol(&reply);
+
+    if (reply == "OK") {
+      http_resp = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK";
+    } else {
+      http_resp = "HTTP/1.1 403 Forbidden\r\nContent-Length: 5\r\n\r\nDENY";
+    }
+    send(c, http_resp.data(), (int)http_resp.size(), 0);
+    close(c);
+  }
+}
+
+
 bool client_application(secure_authenticated_channel &channel) {
   printf("Client peer id is %s\n", channel.peer_id_.c_str());
 
@@ -586,6 +669,9 @@ bool client_application(secure_authenticated_channel &channel) {
     }
   }
   // ---- end provisioning phase ----
+  // Start local pre-round HTTP gateway
+  std::thread gate_thr(preround_http_gateway, &channel, FLAGS_client_id);
+  gate_thr.detach();
 
   // Build: python client.py -i <id>
   std::string cmd = FLAGS_python_bin + std::string(" ") +

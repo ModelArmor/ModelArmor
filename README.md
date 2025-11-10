@@ -41,8 +41,9 @@ Both modes produce the same metrics so we can do apples-to-apples evaluation.
 ModelArmor gives us a repeatable method to quantify the operational cost of adding confidential-computing-style protections to FL—without changing out model code. We can make evidence-based tradeoffs: keep privacy and integrity guarantees while knowing the runtime and memory impact on their actual workload.
 
 ## Where to find details
-- **Non-Secure FL**: see `non-secure-federated-learning/README.md`
-- **Secure FL (SFL)**: see `secure-federated-learning/README.md`
+- **Non-Secure FL**: see [non-secure-federated-learning/README.md](non-secure-federated-learning/README.md)
+- **Secure FL (SFL)**: see [secure-federated-learning/README.md](secure-federated-learning/README.md)
+
 <!-- - **Figures**: run `make_figures.py` to generate comparisons in `figures/` -->
 
 ## Next steps
