@@ -1,7 +1,7 @@
 # client.py
 # Minimal, CPU-only Flower client for MNIST shards with per-round timing & peak RSS logging.
 
-import os, time, pathlib, csv, psutil, argparse
+import os, time, pathlib, csv, psutil, argparse, sys, requests
 import torch, torch.nn as nn, torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
@@ -16,6 +16,7 @@ parser = argparse.ArgumentParser(description="Federated Learning Client for MNIS
 parser.add_argument("-i", "--id", type=int, help="Client ID", default=int(os.environ.get("CLIENT_ID", 1)))
 parser.add_argument("-a", "--addr", type=str, help="Server address (e.g., 127.0.0.1:8080)", default=os.environ.get("SERVER_ADDR", "127.0.0.1:8080"))
 parser.add_argument("-d", "--datasets", type=str, help="Server address (e.g., 127.0.0.1:8080)", default=os.environ.get("SERVER_ADDR", "127.0.0.1:8080"))
+parser.add_argument("--gate_url", type=str, default="http://127.0.0.1:9099/preround")
 args = parser.parse_args()
 
 # ------------------------
@@ -25,7 +26,7 @@ CLIENT_ID = args.id
 SERVER_ADDR = args.addr+":8080"
 SHARD_DIR = os.environ.get("SHARD_DIR", "shards")
 BATCH = int(os.environ.get("BATCH", "32"))
-LOCAL_EPOCHS = int(os.environ.get("LOCAL_EPOCHS", "2"))
+LOCAL_EPOCHS = int(os.environ.get("LOCAL_EPOCHS", "3"))
 LR = float(os.environ.get("LR", "0.01"))
 SEED = int(os.environ.get("SEED", "42"))
 NUM_WORKERS = int(os.environ.get("NUM_WORKERS", "0"))
@@ -37,6 +38,16 @@ CSV_PATH = os.path.join(METRICS_DIR, f"client_{CLIENT_ID}.csv")
 torch.manual_seed(SEED)
 np.random.seed(SEED)
 device = torch.device("cpu")  # t2.micro friendly
+
+def ensure_gate(client_id: int, round_num: int):
+    try:
+        r = requests.get(args.gate_url, params={"client_id": client_id, "round": round_num}, timeout=2.0)
+        if r.status_code != 200:
+            print(f"[ACL] DENIED at round {round_num} (HTTP {r.status_code})", flush=True)
+            sys.exit(3)
+    except Exception as e:
+        print(f"[ACL] gate error at round {round_num}: {e}", flush=True)
+        sys.exit(4)
 
 # ------------------------
 # Data
@@ -130,6 +141,7 @@ class MnistClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
         set_parameters(self.model, parameters)
         rnd = int(config.get("server_round", 0))
+        ensure_gate(args.id, rnd)
         local_epochs = int(config.get("local_epochs", LOCAL_EPOCHS))
         lr = float(config.get("lr", LR))
         t0 = time.time()

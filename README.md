@@ -10,7 +10,7 @@ Modern ML enthusiast want to use **Federated Learning (FL)** to keep raw data lo
 **ModelArmor** is an easy to deploy and implement testbed that runs the FL workload in two modes and compares them:
 
 - **Non-Secure FL (baseline)** — standard VMs running a Flower server and several clients.
-- **Secure FL (SFL)** — the same workload launched through a trust loop** using **simulated enclaves** representing a  confidential computing continnum, and including admission via certificates, per-peer identity, Access Control List (ACL) gating, and an authenticated control channel for optional per-client provisioning such that server can send a file/config to a specific client at connect time.
+- **Secure FL (SFL)** — the same workload launched through a trust loop using **simulated enclaves** representing a  confidential computing continnum, and including admission via certificates, per-peer identity, Access Control List (ACL) gating, and an authenticated control channel for optional per-client provisioning such that server can send a file/config to a specific client at connect time.
 
 Both modes produce the same metrics so we can do apples-to-apples evaluation.
 
@@ -38,11 +38,12 @@ Both modes produce the same metrics so we can do apples-to-apples evaluation.
 - **What policies** (ACL, provisioning) matter for operational control without destabilizing training?
 
 ## Why this matters
-ModelArmor gives us a **repeatable method** to quantify the operational cost of adding confidential-computing-style protections to FL—without changing out model code. We can make evidence-based tradeoffs: keep privacy and integrity guarantees while knowing the runtime and memory impact on their actual workload.
+ModelArmor gives us a repeatable method to quantify the operational cost of adding confidential-computing-style protections to FL—without changing out model code. We can make evidence-based tradeoffs: keep privacy and integrity guarantees while knowing the runtime and memory impact on their actual workload.
 
 ## Where to find details
-- **Non-Secure FL**: see `non-secure-federated-learning/README.md`
-- **Secure FL (SFL)**: see `secure-federated-learning/README.md`
+- **Non-Secure FL**: see [non-secure-federated-learning/README.md](non-secure-federated-learning/README.md)
+- **Secure FL (SFL)**: see [secure-federated-learning/README.md](secure-federated-learning/README.md)
+
 <!-- - **Figures**: run `make_figures.py` to generate comparisons in `figures/` -->
 
 ## Next steps
