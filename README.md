@@ -43,6 +43,7 @@ ModelArmor gives us a repeatable method to quantify the operational cost of addi
 ## Where to find details
 - **Non-Secure FL**: see [non-secure-federated-learning/README.md](non-secure-federated-learning/README.md)
 - **Secure FL (SFL)**: see [secure-federated-learning/README.md](secure-federated-learning/README.md)
+- **Appendix**: see [appendix.pdf](appendix.pdf)
 
 <!-- - **Figures**: run `make_figures.py` to generate comparisons in `figures/` -->
 
